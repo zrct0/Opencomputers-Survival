@@ -158,8 +158,9 @@ function fellTree()
   while isLog do
     robot.swing()
     robot.swingUp()	
-	robot.up()
-	RState.locationZ = RState.locationZ + 1
+	if robot.up() then
+	  RState.locationZ = RState.locationZ + 1
+	end
 	isAir, isLog = detectLog()
 	display()
   end
