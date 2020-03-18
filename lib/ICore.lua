@@ -1,11 +1,11 @@
 local ICore = {}
+local IBuilder = {}
 local IGpu = {}
 local IThread = {}
 local IComponent = {}
-local INetwork = {}
-local ICoreNetwork = {}
 local IUtils = {}
 local IState = {}
+local ICMD = {}
 
 local serialization = require("serialization")
 local computer = require("computer")
@@ -16,61 +16,113 @@ local event = require("event")
 local term = require("term")
 
 
-
+ICore.IBuilder = IBuilder
 ICore.IGpu = IGpu
 ICore.IThread = IThread
 ICore.IUtils = IUtils
-ICore.INetwork = INetwork
 ICore.ICoreNetwork = ICoreNetwork
+ICore.IClientNetwork = IClientNetwork
+ICore.IServerNetwork = IServerNetwork
 ICore.IComponent = IComponent
 ICore.IState = IState
+ICore.ICMD = ICMD
+ICore.w = 0
+ICore.h = 0
+ICore.msgt_type = "info"
 
-ICore.isCMDsShowTime = true
-ICore.GlobelSendRemoteMsg = false
-ICore.GlobelReceiveRemoteMsg = false
+ICore.builder = nil
 
-function ICore:initialize(_CMDsTop, _isCMDsShowTime, _netCallBack, _netWirelessStrength)  
-  ICore.isCMDsShowTime = _isCMDsShowTime
-  IGpu:initialize()
-  local w, h = IGpu:getViewport()
-  IGpu:setCMDMsgPosition(_CMDsTop, h)
-  IGpu:clearCMDsCache()
-  term.clear()
-  
+function ICore:new(builder)
+  local t = {}
+  setmetatable(t, self)
+  self.__index = self
+  t:initialize(builder)
+  return t
 end
 
-function ICore:setGlobelNetworkSetting(_GlobelSendRemoteMsg, _GlobelReceiveRemoteMsg)
-  ICore.GlobelSendRemoteMsg = _GlobelSendRemoteMsg
-  ICore.GlobelReceiveRemoteMsg = _GlobelReceiveRemoteMsg
+function ICore:initialize(builder) 
+  self.builder = builder
+  self.isCMDsPrintTime = builder.isCMDsPrintTime
+  self.IGpu:initialize()
+  self.IGpu.current_cmd_type = self.msgt_type
+  local w, h = self.IGpu:getViewport()
+  self.w = w
+  self.h = h
+  if builder.CMDList then
+	ICMD:initialize(builder.CMDList)
+	self.IGpu:setCMDMsgPosition(builder.CMDsTop, builder.CMDsBottom or h-2)
+  else
+	self.IGpu:setCMDMsgPosition(builder.CMDsTop, builder.CMDsBottom or h)
+  end 
+  self.IGpu:clearCMDsCache()
+  term.clear()  
+  return self
 end
 
-function ICore:error(str)  
-  ICore:printMsg("error", "ERROR:"..str)
- end
-
-function ICore:warn(str)
-  ICore:printMsg("warn", "WARN:"..str)
+function ICore:error(...)    
+    self:printMsg("error", "ERROR:", ...)
 end
 
-function ICore:info(str)
-   ICore:printMsg("info", "INFO:"..str)
+function ICore:warn(...)
+    self:printMsg("warn", "WARN:", ...)
 end
 
-function ICore:init(str)
-   ICore:printMsg("init", "INIT:"..str)
+function ICore:info(...)
+   self:printMsg("info", "INFO:", ...)
 end
 
-function ICore:debug(str)
-   ICore:printMsg("debug", "DEBUG:"..str)
+function ICore:init(...)
+   self:printMsg("init", "INIT:", ...)
 end
 
-function ICore:printMsg(cmd_type, str) 
-   if ICore.isCMDsShowTime then
-     IGpu:writeCMDsCache(cmd_type, "["..os.date("%X").."]"..str)
-   else
-     IGpu:writeCMDsCache(cmd_type, str)
-   end
-   IGpu:printCMDsCache()
+function ICore:debug(...)
+   self:printMsg("debug", "DEBUG:", ...)
+end
+
+function ICore:printMsg(cmd_type, prefix, ...) 
+	local str = prefix
+	for i,v in ipairs({...}) do
+		str = str..(v and tostring(v) or "nil")
+	end
+	if self.builder.isCMDsPrintTime then
+		self.IGpu:writeCMDsCache(cmd_type, "["..os.date("%X").."]"..str)
+	else
+		self.IGpu:writeCMDsCache(cmd_type, str)
+	end
+	self.IGpu:printCMDsCache()
+end
+
+--<============IBuilder=============>
+
+IBuilder.isCMDsPrintTime = false
+IBuilder.CMDsTop = 0
+IBuilder.port = 1
+IBuilder.requireNetClient = false
+IBuilder.requireNetServer = false
+IBuilder.sendCMDMsg = false
+IBuilder.sendCopyDisplay = false
+IBuilder.INet = nil
+
+
+function IBuilder:setCMDsTop(_CMDsTop)
+	IBuilder.CMDsTop = _CMDsTop	
+	return IBuilder
+end
+
+function IBuilder:setCMDMsgPosition(top, bottom)
+	IBuilder.CMDsTop = top	
+	IBuilder.CMDsBottom = bottom	
+	return IBuilder
+end
+
+function IBuilder:setCMDList(_CMDList)		
+	IBuilder.CMDList = _CMDList	
+	return IBuilder
+end
+
+function IBuilder:setIsCMDsPrintTime(_isCMDsPrintTime)		
+	IBuilder.isCMDsPrintTime = _isCMDsPrintTime	
+	return IBuilder
 end
 
 --<============IState=============>
@@ -96,40 +148,63 @@ function IState:getEnergyPercentage()
 end
 
 --<============IGpu=============>
-local CMDsCache = {}
-local CMDsCount = 0
-local CMDsIter = 0
-local MAX_CMDs_COUNT = 20
 local w, h = 0
-local MAIN_INFO_HEIGHT = 0
-local CMDs_INFO_HEIGHT = 0
-local CMDPOS_BOTTOM = 0
-local cmd_type_id = {["all"] = -1, ["debug"] = 0, ["init"] = 1, ["info"] = 2, ["warn"] = 3, ["error"] = 4}
-local cmd_type_color = {["debug"] = 0xFFFFFF, ["init"] = 0xFF00FF, ["info"] = 0x0000FF, ["warn"] = 0xFFFF00, ["error"] = 0xFF0000}
-local isInitialize = false
-local current_cmd_type = "init"
+IGpu.CMDsCache = {}
+IGpu.CMDsCount = 0
+IGpu.CMDsIter = 0
+IGpu.MAX_CMDs_COUNT = 20
+IGpu.MAIN_INFO_HEIGHT = 0
+IGpu.CMDs_INFO_HEIGHT = 0
+IGpu.CMDPOS_BOTTOM = 0
+IGpu.cmd_type_id = {["all"] = -1, ["debug"] = 0, ["init"] = 1, ["info"] = 2, ["warn"] = 3, ["error"] = 4}
+IGpu.cmd_type_color = {["debug"] = 0xFFFFFF, ["init"] = 0xFF00FF, ["info"] = 0x0000FF, ["warn"] = 0xFFFF00, ["error"] = 0xFF0000}
+IGpu.isInitialize = false
+IGpu.current_cmd_type = "debug"
+IGpu.bgColor = 0x000000
 
-local CMDMsgCallback = nil
-local gpu = component.gpu
+IGpu.x = 0
+IGpu.y = 0
+IGpu.w = 0
+IGpu.h = 0
 
-function IGpu:initialize()     
-  w, h = gpu.getViewport()
-  MAIN_INFO_HEIGHT = 9
-  CMDs_INFO_HEIGHT = h - MAIN_INFO_HEIGHT - 1
-  CMDPOS_BOTTOM = h - 2
+IGpu.CMDMsgCallback = nil
+IGpu.gpu = component.gpu
+
+function IGpu:new(_x, _y ,_w ,_h)
+  local t = {}
+  setmetatable(t, self)
+  self.__index = self
+  t:initialize(_x, _y ,_w ,_h)
+  return t
+end
+
+function IGpu:initialize(_x, _y ,_w ,_h)
+  self.x, self.y, self.w, self.h = _x , _y , _w , _h
+  w, h = self.gpu.getViewport()
+  if self.x and self.y and self.w and self.h then
+		
+  else
+	self.x = 2
+	self.y = 1
+	self.w = w
+	self.h = h - 2
+  end  
+  self.MAIN_INFO_HEIGHT = self.y
+  self.CMDs_INFO_HEIGHT = self.h
+  self.CMDPOS_BOTTOM = self.y + self.h
   local totalMemory = computer.freeMemory() 
   local Memory_1T = 19300
   if totalMemory > Memory_1T * 2 then
-    MAX_CMDs_COUNT = 70
+    self.MAX_CMDs_COUNT = 70
   end
   if totalMemory > Memory_1T * 3 then
-    MAX_CMDs_COUNT = 200
+    self.MAX_CMDs_COUNT = 200
   end
   if totalMemory > Memory_1T * 4 then
-    MAX_CMDs_COUNT = 600
+    self.MAX_CMDs_COUNT = 600
   end
-  print("totalMemory:"..totalMemory..", MAX_CMDs_COUNT:"..MAX_CMDs_COUNT)
-  isInitialize = true
+  print("totalMemory:"..totalMemory..", self.MAX_CMDs_COUNT:"..self.MAX_CMDs_COUNT) 
+  self.isInitialize = true
   return w, h
 end
 
@@ -138,13 +213,13 @@ function IGpu:getViewport()
 end
 
 function IGpu:setCMDMsgPosition(top, bottom)
-  MAIN_INFO_HEIGHT = top
-  CMDPOS_BOTTOM = bottom
-  CMDs_INFO_HEIGHT = bottom - top
+  self.MAIN_INFO_HEIGHT = top
+  self.CMDPOS_BOTTOM = bottom
+  self.CMDs_INFO_HEIGHT = bottom - top
 end
 
 function IGpu:setCMDMsgCallback(_CMDMsgCallback)  
-  CMDMsgCallback = _CMDMsgCallback
+  self.CMDMsgCallback = _CMDMsgCallback
 end
 
 function IGpu:getTier()  
@@ -158,26 +233,25 @@ function IGpu:getTier()
 end
 
 function IGpu:writeCMDsCache(cmd_type, cmd, remoteSend)
-  local cache = {cmd_type, tostring(CMDsIter < 10 and "[0" or "[")..CMDsIter.."]"..cmd}
-  CMDsCache[CMDsIter] = cache
-  CMDsIter = CMDsIter + 1
-  if CMDsIter >= MAX_CMDs_COUNT then
-    CMDsIter = 0
+  local cache = {cmd_type, tostring(self.CMDsIter < 10 and "[0" or "[")..self.CMDsIter.."]"..cmd}
+  self.CMDsCache[self.CMDsIter] = cache
+  self.CMDsIter = self.CMDsIter + 1
+  if self.CMDsIter >= self.MAX_CMDs_COUNT then
+    self.CMDsIter = 0
   end 
-  if CMDsCount < MAX_CMDs_COUNT then
-    CMDsCount = CMDsCount + 1
+  if self.CMDsCount < self.MAX_CMDs_COUNT then
+    self.CMDsCount = self.CMDsCount + 1
   end
   
-  if cmd_type_id[cmd_type] >= cmd_type_id["init"] then
-    if CMDMsgCallback then
-      CMDMsgCallback(_, cache)
+  if self.cmd_type_id[cmd_type] >= self.cmd_type_id["init"] then
+    if self.CMDMsgCallback then
+      self.CMDMsgCallback(_, cache)
 	end
-	if remoteSend == nil then
-      remoteSend = ICore.GlobelSendRemoteMsg
-    end
-    if remoteSend then
+	
+	remoteSend = remoteSend or ICore.builder.sendCMDMsg
+    if remoteSend and ICore.builder.INet and ICore.builder.INet.ICoreNetwork.isInitialize then
       local pkg = serialization.serialize(cache)  
-      ICoreNetwork:send("ICMD", cache)
+      ICore.builder.INet.ICoreNetwork:send("ICMD", pkg)
     end
   end
 end
@@ -191,71 +265,70 @@ end
 
 function IGpu:print(x, y, str, color, padRight, remoteSend)
 
-  if color == nil or gpu.getDepth() < 4 then
+  if color == nil or self.gpu.getDepth() < 4 then
     color = 0xFFFFFF
   end
   if padRight == nil then
     padRight = w
   end
-  gpu.setForeground(color)
-  gpu.setBackground(0x000000)
-  gpu.set(x, y, text.padRight(str, padRight))
-  gpu.setForeground(0xFFFFFF)
+  self.gpu.setForeground(color)
+  self.gpu.setBackground(0x000000)
+  self.gpu.set(x, y, text.padRight(str, padRight))
+  self.gpu.setForeground(0xFFFFFF)
 
   if remoteSend == nil then
-    remoteSend = ICore.GlobelSendRemoteMsg
+    remoteSend = ICore.builder.sendCopyDisplay
   end
-  if remoteSend then
+
+  if remoteSend and ICore.builder.INet and ICore.builder.INet.ICoreNetwork.isInitialize then
     local pkg = serialization.serialize({x, y, str, color, padRight})  
-    ICoreNetwork:send("IGpu", pkg)
+    ICore.builder.INet.ICoreNetwork:send("IGpu", pkg)
   end
 end
 
 function IGpu:fill(x, y, w, h, chr, color)
 
-  if color == nil or gpu.getDepth() < 4 then
+  if color == nil or self.gpu.getDepth() < 4 then
     color = 0xFFFFFF
   end
-  gpu.setForeground(color)
-  gpu.setBackground(0x000000)
-  gpu.fill(x, y, w, h ,chr)
-  gpu.setForeground(0xFFFFFF)
+  self.gpu.setForeground(color)
+  self.gpu.setBackground(0x000000)
+  self.gpu.fill(x, y, w, h ,chr)
+  self.gpu.setForeground(0xFFFFFF)
 end
 
 function IGpu:printCMDsCache()
-  if not gpu then 
-    gpu = require("component").gpu
-	w, h = gpu.getViewport()
-	CMDs_INFO_HEIGHT = 5
-  end 
   
-  local CMDsTypeCache, CMDsTypeCacheCount = self:getCMDsCache(CMDs_INFO_HEIGHT)
-  local lastLine = math.min(CMDs_INFO_HEIGHT, CMDsTypeCacheCount - 1)
-  local line = CMDPOS_BOTTOM
+  local CMDsTypeCache, CMDsTypeCacheCount = self:getCMDsCache(self.CMDs_INFO_HEIGHT)
+  local lastLine = math.min(self.CMDs_INFO_HEIGHT, CMDsTypeCacheCount - 1)
+  local line = self.CMDPOS_BOTTOM
   for i=0, lastLine do
-    gpu.setForeground(self:getCMDColor(CMDsTypeCache[i][1]))
-    gpu.setBackground(0x000000)
-    gpu.set(2, line, text.padRight(CMDsTypeCache[i][2], w))
+    self.gpu.setForeground(self:getCMDColor(CMDsTypeCache[i][1]))
+    self.gpu.setBackground(self.bgColor)
+    self.gpu.set(self.x, line, text.padRight(CMDsTypeCache[i][2], self.w))
     line = line - 1
   end 
-  gpu.setForeground(0xFFFFFF)
+  self.gpu.setForeground(0xFFFFFF)
+end
 
+function IGpu:setBgColor(_color)
+	self.bgColor = _color
 end
 
 function IGpu:getCMDColor(cmd_type)
-  if gpu.getDepth() >= 4 then
-    return cmd_type_color[cmd_type]
+  if self.gpu.getDepth() >= 4 then
+    return self.cmd_type_color[cmd_type]
   else
     return 0xFFFFFF
   end
 end
 
 function IGpu:setCmdType(cmd_type)  
-  if cmd_type_id[cmd_type] ~= nil then
-    gpu.fill(1, MAIN_INFO_HEIGHT, w, h, " ")   
-	self:writeCMDsCache("info", "["..os.date("%X").."]INFO:"..str)
+  if self.cmd_type_id[cmd_type] ~= nil then
+    self.gpu.fill(1, self.MAIN_INFO_HEIGHT, w, h, " ")   
+	self:writeCMDsCache("info", "["..os.date("%X").."]INFO:Set CMD Type:->"..cmd_type)
     self:printCMDsCache()   
-    current_cmd_type = cmd_type
+    self.current_cmd_type = cmd_type
 	return true
   end
   return false
@@ -264,10 +337,10 @@ end
 function IGpu:getCMDsCache(count)
   local CMDsTypeCache = {}
   local CMDsTypeCacheIter = 0
-  for i=CMDsIter-1, 0, -1 do  
-    if current_cmd_type == "all" or cmd_type_id[CMDsCache[i][1]] >= cmd_type_id[current_cmd_type] then
+  for i=self.CMDsIter-1, 0, -1 do  
+    if self.current_cmd_type == "all" or self.cmd_type_id[self.CMDsCache[i][1]] >= self.cmd_type_id[self.current_cmd_type] then
 	  if CMDsTypeCacheIter < count then
-        CMDsTypeCache[CMDsTypeCacheIter] = CMDsCache[i]	
+        CMDsTypeCache[CMDsTypeCacheIter] = self.CMDsCache[i]	
         CMDsTypeCacheIter = CMDsTypeCacheIter + 1	
 	  else
 		break
@@ -275,10 +348,10 @@ function IGpu:getCMDsCache(count)
 	end
   end   
   
-  for i=CMDsCount-1, CMDsIter, -1  do
-    if current_cmd_type == "all" or cmd_type_id[CMDsCache[i][1]] >= cmd_type_id[current_cmd_type] then
+  for i=self.CMDsCount-1, self.CMDsIter, -1  do
+    if self.current_cmd_type == "all" or self.cmd_type_id[self.CMDsCache[i][1]] >= self.cmd_type_id[self.current_cmd_type] then
 	  if CMDsTypeCacheIter < count then	    
-         CMDsTypeCache[CMDsTypeCacheIter] = CMDsCache[i]
+         CMDsTypeCache[CMDsTypeCacheIter] = self.CMDsCache[i]
 	     CMDsTypeCacheIter = CMDsTypeCacheIter + 1	
 	  else
 		 break
@@ -288,12 +361,25 @@ function IGpu:getCMDsCache(count)
   return CMDsTypeCache, CMDsTypeCacheIter
 end
 
+function IGpu:drawRectangle(_x, _y ,_w, _h, chr, color)
+  self.gpu.setForeground(0xFFFFFF)
+  self.gpu.setBackground(color)
+  self.gpu.fill(_x, _y, _w, _h, chr)
+end
 
+function IGpu:clear(x, y, w, h)
+  x = x or 1
+  y = y or 1
+  w = w or ICore.w
+  h = h or ICore.h
+  self.gpu.setBackground(0x000000)
+  self.gpu.fill(x, y, w, h, " ")
+end
 
 function IGpu:clearCMDsCache()
-  CMDsCache = {}
-  CMDsCount = 0
-  CMDsIter = 0
+  self.CMDsCache = {}
+  self.CMDsCount = 0
+  self.CMDsIter = 0
 end
 
 --<============IThread=============>
@@ -301,6 +387,7 @@ end
 
 IThread.threads = {}
 IThread.threadsInfo = {}
+IThread.threadsValues = {}
 IThread.counts = 0
 IThread.openosOnErrorFunc = nil
 
@@ -310,9 +397,10 @@ function IThread:create(func, self_pointer, name)
   if not name then
     name = "unname"
   end
-  ICore:debug("create thread ["..name.."] ")  
+  ICore:info("create thread ["..name.."] ")  
   self.threads[self.counts] = thread.create(func, self_pointer)
   self.threadsInfo[self.counts] = {func, self_pointer, name}  
+  self.threadsValues[self.counts] = {}
   self.counts = self.counts + 1
 
   if not self.isInitialize then
@@ -320,8 +408,80 @@ function IThread:create(func, self_pointer, name)
   end  
 end
 
+function IThread:getCurrentThreadId()		
+	for i=0, self.counts - 1 do			
+		if self.threads[i] == thread.current() then		
+			return i
+		end		
+	end
+	ICore:error("getCurrentThreadId fail")
+	return false
+end
+
+function IThread:getCurrentThreadName()		
+	local threadId = self:getCurrentThreadId()
+	if threadId then
+		return self.threadsInfo[threadId][3]
+	end
+	ICore:error("Can not find name ", threadId)
+	return false
+end
+
+function IThread:getCurrentThreadValue()
+	local threadId = self:getCurrentThreadId()
+	if threadId then
+		return self.threadsValues[threadId]
+	end
+	ICore:error("Can not find threadValue ", threadId)
+	return false
+end
+
+function IThread:resume(name)
+	for i=0, self.counts - 1 do		
+		if self.threadsInfo[i][3] == name then
+			local t = self.threads[i] 
+			ICore:debug("thread ["..self.threadsInfo[i][3].."]resume")		
+			t:resume()
+			return true
+		end		
+	end
+	ICore:error("resume thread ["..name.."] can not find")
+	return false
+end
+
+function IThread:suspend(name)
+	if name then
+		for i=0, self.counts - 1 do		
+			if self.threadsInfo[i][3] == name then
+				local t = self.threads[i] 
+				ICore:debug("thread ["..self.threadsInfo[i][3].."]suspend")		
+				t:suspend()
+				return true
+			end		
+		end
+		ICore:error("suspend thread ["..name.."] can not find")
+		return false
+	else
+		ICore:debug("thread [curerent]suspend")		
+		thread.current():suspend()
+	end
+end
+
+function IThread:killThread(name)
+	for i=0, self.counts - 1 do		
+		if self.threadsInfo[i][3] == name then
+			local t = self.threads[i] 
+			ICore:debug("thread ["..self.threadsInfo[i][3].."]killed")		
+			t:kill()
+			return true
+		end		
+	end
+	ICore:error("kill thread ["..name.."] can not find")
+	return false
+end
+
 function IThread:killAllThread()
-  event.onError = IThread.openosOnErrorFunc
+  event.onError = self.openosOnErrorFunc
   for i=0, self.counts - 1 do
     (self.threads[i]):kill()
   end
@@ -332,15 +492,17 @@ function IThread:initialize()
   self.isInitialize = true
   self.openosOnErrorFunc = event.onError
   event.onError = 
-  function (msg)    	
-    ICore:error(msg)   
+  function (msg)  
+	IThread:getCurrentThreadId()	
+	ICore:error("Thread ERROR:",  IThread:getCurrentThreadName())
+    ICore:error(msg)	
   end
-  self:create(self.threadMonitor, self, "IThread")
+  self:create(self.threadMonitor, self, "ithread")
 end
 
 function IThread:threadMonitor()
   while true do       
-    ICore:debug("Scan thread, count:"..self.counts)   
+    --ICore:debug("Scan thread, count:"..self.counts)   
     for i=0, self.counts - 1 do
       local t = self.threads[i]	  
 	  if t:status() == "dead" then
@@ -364,123 +526,40 @@ function IComponent:invoke(componentName, func, ...)
     return component.invoke(result.address, func, ...) 
   end
 end
+--<============ICMD=============>
 
---<============INetwork=============>
+ICMD.commandList = nil
 
-math.randomseed(os.time())
+function ICMD:initialize(_commandList) 
+  self.commandList = _commandList
+  term.clear()
+  IThread:create(self.thread, self, "self")  
+end
 
-INetwork.callback = nil
-INetwork.port = math.random(10000)
-INetwork.isWireless = false
-INetwork.wirelessStrength = 0
+function ICMD:thread()
+  while true do  
+    term.setCursor(1, h)	
+    term.write(" # ")   
+    self:execute(io.read())
+  end
+end
 
-
-
-function INetwork:initialize(_callback, _wirelessStrength) 
-  INetwork.wirelessStrength = _wirelessStrength or 0
-  if IComponent.include.modem then
-    INetwork.callback = _callback   
-	INetwork.isWireless = IComponent:invoke("modem", "isWireless")
-	ICore:init("Modem Open PORT "..INetwork.port.." :"..tostring(IComponent:invoke("modem", "open", INetwork.port)))
-	if _callback then    
-      IThread:create(INetwork.thread, INetwork, "INetwork")
+function ICMD:execute(com) 
+ if self.commandList then
+   coms = text.tokenize(com) 
+   local commandFunc = self.commandList[coms[1]]
+	if commandFunc ~= nil then
+	  IGpu:printLine(1, " ", nil, true)	
+	  ICore:info("Execute "..com)
+	  commandFunc(coms)
+	else	  
+	  local usage = "Usage:  "	 
+	  for key, value in pairs(self.commandList) do 
+        usage = usage.."  "..key
+      end
+	  IGpu:printLine(1, usage, nil, true)	  
 	end
   end
-end
-
-function INetwork:getNetworkInfomation()  
-  return (ICore.IComponent.include.modem and tostring(INetwork.port)..(INetwork.isWireless and ("  Wireless:"..INetwork.wirelessStrength) or "") or "false")
-end
-
-function INetwork:broadcast(CMD, Msg)   
-  if IComponent.include.modem then
-    local pkg = serialization.serialize({CMD, Msg})  
-    IComponent:invoke("modem", "broadcast", INetwork.port, pkg)
-  end
-end
-
-function INetwork:send(address, CMD, Msg) 
-  if IComponent.include.modem then
-    local pkg = serialization.serialize({CMD, Msg})
-    IComponent:invoke("modem", "send", address, INetwork.port, pkg)
-  end
-end
-
-function INetwork:thread()
-  while true do
-    local _, _, from, port, _, message = event.pull("modem_message")    
-	local pkg = serialization.unserialize(message)	
-	if self.callback ~= nil then
-	  self.callback(_, from, pkg[1], pkg[2])
-	else
-	  utils:debug("INetwork callback is nil")
-	end
-  end
-end
-
---<============ICoreNetwork=============>
-
-ICoreNetwork.remoteAddress = {}
-ICoreNetwork.remoteAddress2Id = {}
-ICoreNetwork.remoteCounts = 0
-ICoreNetwork.msgCallback = nil
-ICoreNetwork.commandList = 
-{  
-  ["Require Address"] = function(address, msg)
-    ICoreNetwork:addRemoteAddress(address)
-  end,
-
-  ["Respond Address"] = function(address, msg) 
-    ICoreNetwork:addRemoteAddress(address)
-  end,  
-  
-  ["IGpu"] = function(address, msg) 
-    ICoreNetwork:addRemoteAddress(address)
-
-  end,
-  
-  ["ICMD"] = function(address, msg) 
-    ICoreNetwork:addRemoteAddress(address)
-	
-  end
-}
-
-function ICoreNetwork:addRemoteAddress(address)
-  if not ICoreNetwork.remoteAddress2Id[address] then
-    ICoreNetwork.remoteAddress[ICoreNetwork.remoteCounts] = address
-	ICoreNetwork.remoteAddress2Id[address] = ICoreNetwork.remoteCounts
-	ICoreNetwork.remoteCounts = ICoreNetwork.remoteCounts + 1
-	ICore:info("Network Connected:"..address)
-  end
-end
-
-function ICoreNetwork:execute(address, com, msg)  
-   local commandFunc = ICoreNetwork.commandList[com]
-	if commandFunc ~= nil then	  
-	  ICore:warn("[ICoreNetwork]Execute:"..com)	  
-	  commandFunc(address, msg)
-	elseif ICoreNetwork.msgCallback then
-	  ICoreNetwork.msgCallback(address, com, msg)
-	end
-end
-
-function ICoreNetwork:initialize(_msgCallback) 
-  ICoreNetwork.msgCallback = _msgCallback
-  INetwork:initialize(onMessageCome, _netWirelessStrength)     
-end
-
-function ICoreNetwork:send(CMD, Msg)
-  if IComponent.include.modem then
-    ICore:debug("[NetSend]"..CMD..":"..Msg) 
-	for k, address in pairs(ICoreNetwork.remoteAddress2Id) do
-	  INetwork:send(address, CMD, Msg) 
-	end
-  end
-end
-
-function ICoreNetwork:onMessageCome(Address, CMD, Msg)
-  ICore:debug("@Address:", Address, ", CMD:", CMD, ", Msg:", Msg) 
-  ICoreNetwork.execute(ReactorLocalNetwork, Address, CMD, Msg)
 end
 
 --<============IUtils=============>
@@ -489,7 +568,7 @@ function IUtils:writeFile(data, fileName)
   local file = io.open(fileName, "w")
   file:write(data)
   file:close()
-  IUtils:debug("Writed"..fileName)
+  ICore:debug("Writed"..fileName)
 end
 
 function IUtils:readFile(fileName)
@@ -498,12 +577,51 @@ function IUtils:readFile(fileName)
   for line in file:lines() do
     str = str..line
   end
-  IUtils:debug("Readed"..fileName)
+  ICore:debug("Readed"..fileName)
   return str
 end
 
 function IUtils:fileExist(fileName)
   return filesystem.exists(fileName)
+end
+
+function IUtils:execute(commandList, com, msg)  
+   local commandFunc = commandList[com]
+	if commandFunc ~= nil then	
+	  commandFunc(msg)	
+	end
+end
+
+function IUtils:isStringContain(str, subStr)
+	if string.find(str, subStr) then
+		return true
+	end
+	return false
+end
+
+function IUtils:isTableContain(tab, element)
+  for _, value in pairs(tab) do
+    if IUtils:isStringContain(element, value) then
+      return true
+    end
+  end
+  return false
+end
+
+function IUtils:stackPush(stack, value)
+  table.insert(stack, value)
+end
+
+function IUtils:stackPop(stack)
+  return table.remove (stack)
+end
+
+function IUtils:stackToString(stack)
+  local str = ""
+  for k, v in pairs(stack) do
+    str = str..tostring(v)
+  end
+  return str
 end
 
 return ICore
