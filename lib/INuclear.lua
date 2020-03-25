@@ -2,6 +2,7 @@ local INuclear = {}
 local NBuilder = {}
 local RRedIO = {}
 local RTransposer = {}
+local INet = require("INet")
 
 local ICore = require("ICore")
 local component = require("component")
@@ -15,10 +16,15 @@ INuclear.RETORNAME = component.isAvailable("reactor_chamber") and "reactor_chamb
 INuclear.builder = nil
 
 function INuclear:initialize(builder)	
-	INuclear.builder = builder
-	ICore:initialize(NBuilder.IBuilder)	
+	INuclear.builder = builder	
+	if component.isAvailable("modem") then
+		ICore = INet:initialize(builder.netBuilder)
+	else
+		ICore =  ICore:initialize(builder.netBuilder.iCorebuilder) 		
+	end	
 	INuclear.RRedIO:adapte()
 	INuclear.RTransposer:adapte()
+	return ICore
 end
 
 function INuclear:isRunning()
@@ -43,8 +49,8 @@ end
 
 --<============NBuilder=============>
 
-function NBuilder:setIBuilder(builder)
-	NBuilder.IBuilder = builder
+function NBuilder:setNetBuilder(builder)
+	NBuilder.netBuilder = builder
 	return NBuilder
 end
 
@@ -62,17 +68,21 @@ RTransposer.runtimeMap = {}
 
 function RTransposer:adapte(chestName)
   chestName = chestName or "tile.chest"
+  reactorName = reactorName or "ic2"
   ICore:init("RTransposer start adapte") 
   if not component.isAvailable("transposer")then 
 	ICore:error("Cannot find transposer")
 	return false
   end
   for i=0, 5 do    
-	local inventoryName = ICore.IComponent:invoke("transposer", "getInventoryName", i)
-	if inventoryName == chestName then
-		RTransposer.chestSide = i
-	elseif inventoryName == "blockReactorChamber" then
-		RTransposer.reactorSide = i
+	local inventoryName = ICore.IComponent:invoke("transposer", "getInventoryName", i)	
+	ICore:init("inventoryName:", inventoryName)
+	if inventoryName then
+		if inventoryName == chestName then
+			RTransposer.chestSide = i
+		elseif ICore.IUtils:isStringContain(inventoryName, reactorName) then
+			RTransposer.reactorSide = i
+		end
 	end
   end
   ICore:init("Find reactor side:"..RTransposer.reactorSide)
@@ -124,6 +134,7 @@ function RTransposer:scanReactor()
 		os.sleep(0.1)		
 	end	
 	ICore:debug("scan reactor finished") 
+	os.sleep(0.1)
 	if INuclear.builder.scanReactorCallback then
 		INuclear.builder.scanReactorCallback()
 	end

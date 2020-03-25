@@ -67,10 +67,11 @@ end
 
 function ITurret:computeAngle(pos)	
 	local distance = pos:magnitude()
-	local angle1 = math.atan2(pos.x, -pos.y)
+	local angle1 = ITurret.atan2(pos.x, -pos.y)
 	local angle2 = math.asin(pos.z / distance)
 	local angle = Vector3:new(angle1, angle2, 0)	
 	return angle
 end
+
 
 return ITurret

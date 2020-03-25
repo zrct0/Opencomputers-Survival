@@ -5,6 +5,7 @@ local IThread = {}
 local IComponent = {}
 local IUtils = {}
 local IState = {}
+local IInput = {}
 local ICMD = {}
 
 local serialization = require("serialization")
@@ -20,17 +21,16 @@ ICore.IBuilder = IBuilder
 ICore.IGpu = IGpu
 ICore.IThread = IThread
 ICore.IUtils = IUtils
-ICore.ICoreNetwork = ICoreNetwork
-ICore.IClientNetwork = IClientNetwork
-ICore.IServerNetwork = IServerNetwork
 ICore.IComponent = IComponent
 ICore.IState = IState
 ICore.ICMD = ICMD
+ICore.IInput = IInput
 ICore.w = 0
 ICore.h = 0
-ICore.msgt_type = "info"
+ICore.msgt_type = "debug"
 
 ICore.builder = nil
+
 
 function ICore:new(builder)
   local t = {}
@@ -42,7 +42,7 @@ end
 
 function ICore:initialize(builder) 
   self.builder = builder
-  self.isCMDsPrintTime = builder.isCMDsPrintTime
+  self.isCMDsPrintTime = builder.isCMDsPrintTime 
   self.IGpu:initialize()
   self.IGpu.current_cmd_type = self.msgt_type
   local w, h = self.IGpu:getViewport()
@@ -53,8 +53,7 @@ function ICore:initialize(builder)
 	self.IGpu:setCMDMsgPosition(builder.CMDsTop, builder.CMDsBottom or h-2)
   else
 	self.IGpu:setCMDMsgPosition(builder.CMDsTop, builder.CMDsBottom or h)
-  end 
-  self.IGpu:clearCMDsCache()
+  end   
   term.clear()  
   return self
 end
@@ -156,8 +155,8 @@ IGpu.MAX_CMDs_COUNT = 20
 IGpu.MAIN_INFO_HEIGHT = 0
 IGpu.CMDs_INFO_HEIGHT = 0
 IGpu.CMDPOS_BOTTOM = 0
-IGpu.cmd_type_id = {["all"] = -1, ["debug"] = 0, ["init"] = 1, ["info"] = 2, ["warn"] = 3, ["error"] = 4}
-IGpu.cmd_type_color = {["debug"] = 0xFFFFFF, ["init"] = 0xFF00FF, ["info"] = 0x0000FF, ["warn"] = 0xFFFF00, ["error"] = 0xFF0000}
+IGpu.cmd_type_id = {["all"] = -1, ["debug"] = 0, ["init"] = 1, ["info"] = 2, ["warn"] = 3, ["green"] = 4, ["yellow"] = 5, ["error"] = 6}
+IGpu.cmd_type_color = {["debug"] = 0xFFFFFF, ["init"] = 0xFF00FF, ["info"] = 0x0000FF, ["green"] = 0x00FF00, ["yellow"] = 0xFFFF00, ["warn"] = 0xFFFF00, ["error"] = 0xFF0000}
 IGpu.isInitialize = false
 IGpu.current_cmd_type = "debug"
 IGpu.bgColor = 0x000000
@@ -169,6 +168,7 @@ IGpu.h = 0
 
 IGpu.CMDMsgCallback = nil
 IGpu.gpu = component.gpu
+IGpu.enableCMD = true
 
 function IGpu:new(_x, _y ,_w ,_h)
   local t = {}
@@ -204,6 +204,7 @@ function IGpu:initialize(_x, _y ,_w ,_h)
     self.MAX_CMDs_COUNT = 600
   end
   print("totalMemory:"..totalMemory..", self.MAX_CMDs_COUNT:"..self.MAX_CMDs_COUNT) 
+  self:clearCMDsCache()
   self.isInitialize = true
   return w, h
 end
@@ -233,6 +234,9 @@ function IGpu:getTier()
 end
 
 function IGpu:writeCMDsCache(cmd_type, cmd, remoteSend)
+  if not self.enableCMD then
+    return
+  end
   local cache = {cmd_type, tostring(self.CMDsIter < 10 and "[0" or "[")..self.CMDsIter.."]"..cmd}
   self.CMDsCache[self.CMDsIter] = cache
   self.CMDsIter = self.CMDsIter + 1
@@ -297,16 +301,32 @@ function IGpu:fill(x, y, w, h, chr, color)
   self.gpu.setForeground(0xFFFFFF)
 end
 
-function IGpu:printCMDsCache()
-  
+function IGpu:printCMDsCache()	
+  if not self.enableCMD then
+    return
+  end
   local CMDsTypeCache, CMDsTypeCacheCount = self:getCMDsCache(self.CMDs_INFO_HEIGHT)
-  local lastLine = math.min(self.CMDs_INFO_HEIGHT, CMDsTypeCacheCount - 1)
-  local line = self.CMDPOS_BOTTOM
-  for i=0, lastLine do
+  local lastLine = self.CMDs_INFO_HEIGHT
+  local line = self.CMDPOS_BOTTOM  
+  local i = 0
+  local tline = 0
+  while tline <= lastLine and i < CMDsTypeCacheCount do	   
     self.gpu.setForeground(self:getCMDColor(CMDsTypeCache[i][1]))
     self.gpu.setBackground(self.bgColor)
-    self.gpu.set(self.x, line, text.padRight(CMDsTypeCache[i][2], self.w))
-    line = line - 1
+	local sout = CMDsTypeCache[i][2]
+	local slen = string.len(sout)
+	local pline = math.floor(slen / self.w)
+	local sline = 0
+	while sline * self.w < slen do
+		local substart = sline * self.w
+		local subend = (sline + 1) * self.w - 1
+		local lout = string.sub(sout, substart, subend)
+		self.gpu.set(self.x, line - pline + sline, text.padRight(lout, self.w))
+		sline = sline + 1
+		tline = tline + 1
+	end		
+    line = line - sline	
+	i = i + 1	
   end 
   self.gpu.setForeground(0xFFFFFF)
 end
@@ -392,8 +412,12 @@ IThread.counts = 0
 IThread.openosOnErrorFunc = nil
 
 IThread.isInitialize = false
+IThread.stop = false
 
 function IThread:create(func, self_pointer, name)
+  if self.stop then
+	return
+  end
   if not name then
     name = "unname"
   end
@@ -481,10 +505,13 @@ function IThread:killThread(name)
 end
 
 function IThread:killAllThread()
+  self.stop = true
+  ICore:error("run killAllThread, ", self.stop)
   event.onError = self.openosOnErrorFunc
   for i=0, self.counts - 1 do
     (self.threads[i]):kill()
-  end
+	ICore:warn("kill ", self.threads[i], ", ", (self.threads[i]):status())
+  end    
   os.exit()
 end
 
@@ -501,7 +528,7 @@ function IThread:initialize()
 end
 
 function IThread:threadMonitor()
-  while true do       
+  while not self.stop do     	
     --ICore:debug("Scan thread, count:"..self.counts)   
     for i=0, self.counts - 1 do
       local t = self.threads[i]	  
@@ -532,15 +559,14 @@ ICMD.commandList = nil
 
 function ICMD:initialize(_commandList) 
   self.commandList = _commandList
-  term.clear()
-  IThread:create(self.thread, self, "self")  
+  IInput:initialize(3) 
+  IThread:create(self.thread, self, "ICMD")  
 end
 
 function ICMD:thread()
-  while true do  
-    term.setCursor(1, h)	
-    term.write(" # ")   
-    self:execute(io.read())
+  while true do      
+	IGpu.gpu.set(1, h, "# ")
+    self:execute(IInput:read())
   end
 end
 
@@ -550,7 +576,7 @@ function ICMD:execute(com)
    local commandFunc = self.commandList[coms[1]]
 	if commandFunc ~= nil then
 	  IGpu:printLine(1, " ", nil, true)	
-	  ICore:info("Execute "..com)
+	  ICore:debug("Execute "..com)
 	  commandFunc(coms)
 	else	  
 	  local usage = "Usage:  "	 
@@ -560,6 +586,59 @@ function ICMD:execute(com)
 	  IGpu:printLine(1, usage, nil, true)	  
 	end
   end
+end
+
+
+--<============IInput=============>
+
+IInput.stream = ""
+IInput.slen = 0
+IInput.x = 1
+IInput.y = h
+
+
+function IInput:initialize(x, y) 
+	self.x = x or 1
+	self.y = y or h
+    IThread:create(self.thread, self, "IInput")  
+end
+
+function IInput:thread()
+  while true do  
+	  IGpu.gpu.setBackground(0x000000)
+      IGpu.gpu.set(self.x + self.slen, self.y, " ")
+	  os.sleep(0.5)
+	  IGpu.gpu.setBackground(0xFFFFFF)
+	  IGpu.gpu.set(self.x + self.slen, self.y, " ")
+	  os.sleep(0.5)
+  end
+end
+
+function IInput:read(bgColor, fgColor)
+	bgColor = bgColor or 0x000000
+	fgColor = fgColor or 0xFFFFFF
+	self.stream = ""
+	local eventname, keyboardAddress, chr, code, playerName = event.pull("key_down")	
+	while chr ~= 13 do	 	
+	  IGpu.gpu.setBackground(bgColor)
+	  IGpu.gpu.getForeground(fgColor)	  
+	  if chr == 8 then
+	    if self.slen > 0 then
+			self.stream = string.sub(self.stream, 1, -2)
+			IGpu.gpu.set(self.x, self.y, self.stream.."  ")	  
+			self.slen = self.slen - 1
+		end
+	  else
+		self.stream = self.stream..string.char(chr)
+		IGpu.gpu.set(self.x, self.y, self.stream.."  ")	  
+		self.slen = self.slen + 1
+	  end	  
+	  eventname, keyboardAddress, chr, code, playerName = event.pull("key_down")
+	end
+	IGpu.gpu.setBackground(bgColor)
+	IGpu.gpu.fill(self.x, self.y, self.slen + 1, 1, " ")
+	self.slen = 0
+	return self.stream
 end
 
 --<============IUtils=============>

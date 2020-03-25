@@ -24,18 +24,28 @@ function INet:initialize(builder)
   self.builder.iCorebuilder.INet = self
   self.builder.iCorebuilder.sendCMDMsg = builder.sendCMDMsg
   self.builder.iCorebuilder.sendCopyDisplay = builder.sendCopyDisplay
-  ICore = ICore:initialize(self.builder.iCorebuilder)  
-  if builder.requireNetClient then	
-	IClientNetwork:initialize()
-  end
-  if builder.requireNetServer then
-	IServerNetwork:initialize()
+  ICore = ICore:initialize(self.builder.iCorebuilder) 
+  if component.isAvailable("modem") then
+	  if builder.requireNetClient then	
+		IClientNetwork:initialize()
+	  end
+	  if builder.requireNetServer then
+		IServerNetwork:initialize()
+	  end
+  else
+	ICore:warn("INet is unavailable")
   end
   return ICore
 end
 
 function INet:setWirelessStrength(s) 
-	ICore.IComponent:invoke("modem", "setStrength", s)
+	if ICore.IComponent:invoke("modem", "isWireless") then
+		ICore.IComponent:invoke("modem", "setStrength", s)
+	end
+end
+
+function INet.simplifyAddress(address) 
+	return string.sub(address, 1, 3)
 end
 
 --<============NBuilder=============>
@@ -55,20 +65,14 @@ function NBuilder:setNetRemoteConnectedCallback(_remoteConnectedCallback)
 	return self
 end
 
-function NBuilder:setClientNet(_serverMsgCallback, _serverCMDCallback)	
-	if not component.isAvailable("modem") then
-		error("[setClientNet] ERROR:Cannot find modem!")
-	end
+function NBuilder:setClientNet(_serverMsgCallback, _serverCMDCallback)		
 	self.serverMsgCallback = _serverMsgCallback	
 	self.serverCMDCallback = _serverCMDCallback
 	self.requireNetClient = true
 	return self
 end
 
-function NBuilder:setServerNet(_commonMsgCallback, _CMDMsgCallback, _copyDisplayCallback)
-	if not component.isAvailable("modem") then
-		error("[setServerNet] ERROR:Cannot find modem!")
-	end
+function NBuilder:setServerNet(_commonMsgCallback, _CMDMsgCallback, _copyDisplayCallback)	
 	self.commonMsgCallback = _commonMsgCallback
 	self.CMDMsgCallback = _CMDMsgCallback
 	self.copyDisplayCallback = _copyDisplayCallback
@@ -102,7 +106,9 @@ INetwork.wirelessStrength = 0
 
 function INetwork:initialize(_callback) 
   self.wirelessStrength = INet.builder.wirelessStrength or 0
-  ICore.IComponent:invoke("modem", "setStrength", self.wirelessStrength)
+  if ICore.IComponent:invoke("modem", "isWireless") then
+	ICore.IComponent:invoke("modem", "setStrength", self.wirelessStrength)
+  end
   self.port = INet.builder.port or math.random(10000)
   if ICore.IComponent.include.modem then
     self.callback = _callback   
@@ -128,14 +134,19 @@ end
 
 function INetwork:send(address, CMD, Msg) 
   if ICore.IComponent.include.modem then
-	ICore:debug("INET send:".."["..CMD.."]"..Msg)
+    if not Msg then
+		ICore:error(debug.traceback())
+		error("Msg is nil")		
+		return 
+	end
+	ICore:debug("INET send:", "[", CMD, "]", Msg)
     local pkg = serialization.serialize({CMD, Msg})
     ICore.IComponent:invoke("modem", "send", address, self.port, pkg)
   end
 end
 
 function INetwork:thread()
-  while true do
+  while not ICore.IThread.stop do
     local _, _, from, port, _, message = event.pull("modem_message")    
 	local pkg = serialization.unserialize(message)	
 	if self.callback ~= nil then	  
@@ -168,12 +179,14 @@ function ICoreNetwork:addServerAddress(address)
 end
 
 function ICoreNetwork:execute(address, com, msg)  
-   local commandFunc = ICoreNetwork.commandList[com]
+   local commandFunc = ICoreNetwork.commandList[com]  
 	if commandFunc ~= nil then	  
 	  ICore:debug("[ICoreNetwork]Execute:"..com)	  
 	  commandFunc(address, msg)
-	elseif ICoreNetwork.msgCallback then
+	elseif ICoreNetwork.msgCallback then		
 	  ICoreNetwork.msgCallback(address, com, msg)
+	else 
+	  ICore:debug("unExecute:"..com)	  
 	end
 end
 
@@ -193,7 +206,7 @@ function ICoreNetwork:send(CMD, Msg)
 end
 
 function ICoreNetwork:onMessageCome(Address, CMD, Msg)
-  ICore:debug("ICoreNetwork@Address:", string.sub(Address, 1, 3), ", CMD:", CMD, ", Msg:", Msg) 
+  ICore:debug("ICoreNetwork@Address:", INet.simplifyAddress(Address) , ", CMD:", CMD, ", Msg:", Msg) 
   ICoreNetwork.execute(ICoreNetwork, Address, CMD, Msg)
 end
 
@@ -224,7 +237,7 @@ IClientNetwork.commandList =
 }
 
 function IClientNetwork:initialize() 
-	ICoreNetwork:initialize(IClientNetwork.commandList, INet.builder.remoteMsgCallback) 
+	ICoreNetwork:initialize(IClientNetwork.commandList, INet.builder.serverMsgCallback) 
 	INetwork:broadcast("Require Address", "From Client")
 end
 
