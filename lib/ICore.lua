@@ -27,7 +27,7 @@ ICore.ICMD = ICMD
 ICore.IInput = IInput
 ICore.w = 0
 ICore.h = 0
-ICore.msgt_type = "debug"
+ICore.msgt_type = "info"
 
 ICore.builder = nil
 
@@ -629,9 +629,11 @@ function IInput:read(bgColor, fgColor)
 			self.slen = self.slen - 1
 		end
 	  else
+	    if chr >=32 and chr <=126 then
 		self.stream = self.stream..string.char(chr)
 		IGpu.gpu.set(self.x, self.y, self.stream.."  ")	  
 		self.slen = self.slen + 1
+		end
 	  end	  
 	  eventname, keyboardAddress, chr, code, playerName = event.pull("key_down")
 	end

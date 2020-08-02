@@ -1,8 +1,12 @@
-robot = require("robot")
-term = require("term")
-component = require("component")
-ICore = require("ICore")
-sides = require("sides")
+
+
+
+local robot = require("robot")
+local term = require("term")
+local component = require("component")
+local sides = require("sides")
+local ICore = require("ICore")
+local INet = require("INet")
 
 RComponent = {}
 RComponent.include = {}
@@ -60,25 +64,24 @@ function display()
 	ICore.IGpu:print(col1, startLine + 4, "Location:"..((RState.side == sides.right) and "+" or "-").."("..RState.locationX..","..RState.locationZ..")", nil, pad1)
 
 	ICore.IGpu:print(col2, startLine + 0, " Energy:"..ICore.IState:getEnergyString(), nil, pad2)
-	ICore.IGpu:print(col2, startLine + 1, " Modem:"..ICore.INetwork:getNetworkInfomation(), nil, pad2)
-	ICore.IGpu:print(col2, startLine + 2, "", nil, pad2)
-	ICore.IGpu:print(col2, startLine + 3, " Tractor Beamr:"..(RComponent.include.tractor_beam and "true" or "false"), nil, pad2)
-	ICore.IGpu:print(col2, startLine + 4, "", nil, pad2)
+	ICore.IGpu:print(col2, startLine + 1, "", nil, pad2)
+	ICore.IGpu:print(col2, startLine + 2, " Tractor Beamr:"..(RComponent.include.tractor_beam and "true" or "false"), nil, pad2)
+	ICore.IGpu:print(col2, startLine + 3, "", nil, pad2)
 
 	ICore.IGpu:fill(col1, startLine + 5, 160, 1, "=")  
 end
 
-function main()
-  if #args < 1 then
-    printUsage()
-	return    
+function main() 
+
+  RState.mode = 1  
+
+  local ibuilder = ICore.IBuilder:setCMDsTop(8)  
+  if component.isAvailable("modem") then
+	local nbuilderClient = INet.NBuilder:setNet(102, ibuilder):setClientNet(onServerCMDCome):SendCMDMsg():SendCopyDisplay():setWirelessStrength(64)
+	ICore = INet:initialize(nbuilderClient)
+  else
+	ICore =  ICore:initialize(ibuilder)  
   end
-
-  RState.mode = ((args[1] == "-m") and 1 or 0)
-  local sendNetwork = args[2] == "-r"
-
-  ICore:initialize(6, false)
-  ICore:setGlobelNetworkSetting(sendNetwork, false)
   RState:initialize()
   while true do    
     display()
@@ -92,6 +95,15 @@ function main()
 	  if RState.mode == 1 then
 	    if isAir then
 		  ICore:info("Move to end. TurnAround")	
+		  if RState.side == sides.left then
+		    --INet:setWirelessStrength(64)
+		    dropToChest();
+			changeAction("charge power")  
+			while ICore.IState:getEnergyPercentage() < 98 do
+			os.sleep(10)
+		    end		  
+		    --INet:setWirelessStrength(0)
+		  end
 		  RState.side = (RState.side == sides.right) and sides.left or sides.right
 		  display()
 		end
@@ -108,15 +120,22 @@ function main()
   end
 end
 
+function dropToChest()
+	changeAction("dropToChest")  	
+	robot.turnLeft()
+	for i=2, robot.inventorySize() do
+		if robot.count(i) > 0 then
+			robot.select(i)
+			robot.drop()
+		end		
+	end
+	robot.turnRight()
+end
+
 function printUsage()  
   print("Usages: ")
-  print("  plant <mode>")
-  print("  <1>mode use:")   
-  print("     -o: Monitor single tree")  
-  print("     -m: Monitor multiple trees") 
-  print("  <2>network use:")   
-  print("     -l: location")  
-  print("     -r: remote")  
+  print("  plant")
+
 end
 
 function moveToNextTree()
@@ -182,14 +201,7 @@ end
 
 function suckSapling()
   changeAction("Suck Sapling") 
-  suck()
-  robot.turnRight()
-  suck()
-  robot.turnRight()
-  suck()
-  robot.turnRight()
-  suck()
-  robot.turnRight()
+  suck()  
   changeAction("Wait")  
 end
 

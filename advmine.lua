@@ -1,5 +1,27 @@
 --往左边挖矿
 --箱子放右边
+
+--左边升级栏摆放：
+--区块载入
+--超级电池
+--发电机
+--物品栏x2
+--键盘、显示器
+--地质分析仪
+--超级卡槽、基础卡槽
+--物品栏控制升级
+
+--右边放入：
+--超级cpu
+--T3内存x1
+--T2内存x1
+--高级无线网卡
+--eeprom
+--硬盘
+
+local ignoreDurability = true
+local moveInterval = 2
+
 local robot = require("robot")
 local component = require("component")
 local ICore = require("ICore")
@@ -8,6 +30,8 @@ local computer = require("computer")
 local IRobot = require("IRobot")
 local Vector3 = require("IVector3")
 local INet = require("INet")
+
+
 
 RComponent = {}
 RComponent.include = {}
@@ -52,6 +76,10 @@ function RState:update()
 end
 
 function RState:updateDurability()
+  if ignoreDurability then
+	RState.durability = 100
+	return
+  end
   local result, _, _ = robot.durability()
   RState.durability = result or 0
 end
@@ -77,11 +105,13 @@ local w, h = 0, 0
 local skip = 0
 local target = 0
 local enableNet = true
-local oreList = {"coal", "iron", "gold", "lapis", "diamond", "redstone", "emerald", "dye", "pickaxe", "drill" ,"resource", "quartz", "material", "ore_metal", "railcraft:ore", "mekanism:oreblock"}
+local oreList = {"coal", "iron", "gold", "lapis", "diamond", "redstone", "emerald", "dye", "pickaxe", "drill" ,"resource", "ic2", "quartz", "material", "ore_metal", "railcraft:ore", "mekanism:oreblock"}
 local advToolOreList = {"lapis", "diamond", "redstone", "emerald", "dye"}
 local advToolSlot = 1
 local currentTool = 0
 local oreCount = 0
+local sd = 0
+local moveInvoke = 2
 
 function display()
     local startLine = 1
@@ -112,7 +142,8 @@ function main()
 	return    
   end
   RState.maxDistance = tonumber(args[1])
-  skip = tonumber(args[2] or 0)
+  sd = tonumber(args[2] or 0)
+  skip = tonumber(args[3] or 0)
   target = target + skip
   local ibuilder = ICore.IBuilder:setCMDsTop(8)
   if component.isAvailable("modem") and enableNet then
@@ -121,16 +152,23 @@ function main()
   else
 	ICore =  ICore:initialize(ibuilder)  
   end
-  if not robot.durability() then
+  if not ignoreDurability and not robot.durability() then
 	error("tool durability == 0")
   end
   RState:initialize()
   if RComponent.include.Chunkloader then
     ICore.IComponent:invoke("chunkloader", "setActive", true)  
   end
-  IRobot:initialize(true)   
+  IRobot:initialize(true, nil, moveCallback)   
   ICore.IThread:create(start, nil, "start")
   ICore.IThread:create(monitor, nil, "monitor")
+end
+
+function moveCallback(result)
+  if ICore.IState:getEnergyPercentage() < 5 then
+	  ICore:error("Low Energy")
+	  charge()
+  end
 end
 
 function monitor()
@@ -143,7 +181,7 @@ end
 
 function printUsage()  
   print("Usages: ")
-  print("  mine <Max distance, skip>")
+  print("  mine <Max distance, sd, skip>")
   if not RComponent.include.Geolyzer then
     print("  <2>place a Stone in first slot to avoid robot dig stone ") 
   end
@@ -171,8 +209,8 @@ function start()
 end
 
 function dropOreToChest()
-	ICore:info("dropUnusedOre")
-	IRobot:turnTo(IRobot.S)
+	ICore:debug("dropOreToChest")
+	IRobot:turnTo(sd == 0 and IRobot.S or IRobot.N)
 	for i=2, robot.inventorySize() do
 		if robot.count(i) > 0 then
 			robot.select(i)
@@ -182,7 +220,7 @@ function dropOreToChest()
 end
 
 function dropUnusedOre()
-	ICore:info("dropUnusedOre")
+	ICore:debug("dropUnusedOre")
 	for i=2, robot.inventorySize() do
 		if robot.count(i) > 0 then
 			local stack = ICore.IComponent:invoke("inventory_controller", "getStackInInternalSlot", i) 
@@ -196,7 +234,7 @@ end
 
 function changeToNormalTool()	
 	if currentTool == 1 then
-		ICore:info("change to normalToolSwing")
+		ICore:debug("change to normalToolSwing")
 		currentTool = 0
 		changeTool(advToolSlot)
 	end
@@ -204,7 +242,7 @@ end
 
 function changeToAdvTool()
 	if currentTool == 0 then
-		ICore:info("change to advToolSwing")
+		ICore:debug("change to advToolSwing")
 		currentTool = 1
 		changeTool(advToolSlot)
 	end
@@ -212,13 +250,16 @@ end
 
 function changeTool(toolSlot)	
 	robot.select(toolSlot)
-	ICore:info("changeTool:", ICore.IComponent:invoke("inventory_controller", "equip"))
+	ICore:debug("changeTool:", ICore.IComponent:invoke("inventory_controller", "equip"))
 end
 
 function findNewTarget()
 	target = target + 1
 	ICore:info("Find target:", target)
-	IRobot:moveTo(Vector3:new(0,-target * 4,0))
+	local realMoveInvoke = moveInvoke + 1
+	realMove = moveInterval + 1
+	realMoveInvoke = (sd == 0 and -realMove or realMove)
+	IRobot:moveTo(Vector3:new(0,target * realMoveInvoke,0))
 	IRobot:turnTo(IRobot.E)
 	display()	
 end
@@ -461,7 +502,7 @@ function RealDigOre(digSide)
   end
   local result, info = detectFunc()
   if result then
-    if robotSwingWihtTime(digSide, 0.35) then
+    if robotSwingWihtTime(digSide, 0.35) or RComponent.include.Geolyzer then
       if RState.mode == 2 then
         robotMove(digSide)
         RState.recursionLayer = RState.recursionLayer + 1

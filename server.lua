@@ -21,9 +21,10 @@ local CMDList =
 }
 
 function main()   
-	local top = tonumber(args[1] or 8)
+	top = tonumber(args[1] or 8)
+	local port = tonumber(args[2] or 102)
 	local ibuilderServer = ICore.IBuilder:setCMDsTop(top):setCMDList(CMDList)
-	local nbuilderServer = INet.NBuilder:setNet(101, ibuilderServer):setServerNet(onClientCommonMsgCome, onClientCMDMsgCome, onCopyDisplay):setNetRemoteConnectedCallback(onRemoteConnected):setWirelessStrength(16) 	
+	local nbuilderServer = INet.NBuilder:setNet(port, ibuilderServer):setServerNet(onClientCommonMsgCome, onClientCMDMsgCome, onCopyDisplay):setNetRemoteConnectedCallback(onRemoteConnected):setWirelessStrength(400) 	
 	ICore = INet:initialize(nbuilderServer)
 		
 end
@@ -35,7 +36,7 @@ end
 function onClientCMDMsgCome(address, cmd_type, msg)		
 	ICore.IGpu:writeCMDsCache(cmd_type, msg)
 	ICore.IGpu:printCMDsCache()	
-	ICore.IGpu:fill(col1, top - 1, 160, 1, "=") 	
+	ICore.IGpu:fill(0, top - 1, 160, 1, "=") 	
 end
 
 function onCopyDisplay(address, x, y, str, color, padRight)
